@@ -1,1 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Epitope Binning - Parallel Flow</title>
+    <style>
+        /* --- BRAND PALETTE --- */
+        :root {
+            --nicoya-dark-blue: #212B38;
+            --nicoya-light-blue: #67CBDF;
+            --nicoya-white: #FFFFFF;
+            --nicoya-yellow: #E9C259;
+            --nicoya-light-grey: #F2F2F2;
+            --nicoya-border: #E0E0E0;
+            --sidebar-width: 280px;
+        }
 
+        /* --- LAYOUT --- */
+        body {
+            font-family: 'Montserrat', 'Segoe UI', sans-serif;
+            margin: 0; height: 100vh; width: 100vw;
+            display: grid;
+            grid-template-columns: var(--sidebar-width) 1fr var(--sidebar-width);
+            grid-template-rows: min-content 1fr;
+            grid-template-areas: "header header header" "left main right";
+            overflow: hidden; background-color: #FAFAFA;
+        }
+
+        @media (max-width: 1100px) {
+            body {
+                grid-template-columns: var(--sidebar-width) 1fr;
+                grid-template-rows: min-content 1fr 140px; 
+                grid-template-areas: "header header" "left main" "left right";
+            }
+            .sidebar-right {
+                border-left: none !important;
+                border-top: 1px solid var(--nicoya-border);
+                flex-direction: row !important;
+                gap: 20px; padding: 0.5rem 1rem !important; align-items: flex-start;
+            }
+            .sidebar-right .details-header-group {
+                min-width: 140px; margin-bottom: 0 !important;
+                display: flex; flex-direction: column; justify-content: center; height: 100%;
+            }
+            .table-container { flex: 1; height: 100%; overflow-y: auto; }
+            .data-table th { position: sticky; top: 0; background: white; z-index: 2; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        }
+
+        header {
+            grid-area: header;
+            background-color: var(--nicoya-white);
+            border-bottom: 1px solid var(--nicoya-border);
+            display: flex; align-items: center; justify-content: space-between;
+            flex-wrap: wrap; padding: 10px 2rem; gap: 15px;
+            min-height: 70px; height: auto;
+            z-index: 20; box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .brand { 
+            font-weight: 800; font-size: 1.3rem; color: var(--nicoya-dark-blue); 
+            display:flex; align-items:center; gap:10px; min-width: 220px;
+        }
+        
+        .config-panel { 
+            display: flex; gap: 1rem 2rem; align-items: center; height: 100%; 
+            flex-wrap: wrap; justify-content: flex-end; flex: 1; 
+        }
+        
+        .config-group { 
+            display: flex; align-items: center; gap: 0.8rem; padding: 0.5rem 0; position: relative;
+        }
+        
+        .config-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; color: #999; letter-spacing: 0.5px; }
+
+        /* --- SIDEBARS --- */
+        aside { background-color: var(--nicoya-white); overflow-y: auto; display: flex; flex-direction: column; z-index: 15; }
+        .sidebar-left { grid-area: left; border-right: 1px solid var(--nicoya-border); }
+        .sidebar-right { grid-area: right; border-left: 1px solid var(--nicoya-border); padding: 1.5rem; }
+
+        .sidebar-header { padding: 1.2rem; font-size: 0.85rem; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 1px; }
+        .activity-list { list-style: none; padding: 0; margin: 0; }
+        .activity-item { border-bottom: 1px solid #f5f5f5; }
+        .activity-btn { width: 100%; padding: 0.9rem 1.2rem; background: none; border: none; text-align: left; font-weight: 600; color: var(--nicoya-dark-blue); cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; font-size: 0.9rem;}
+        .activity-btn:hover { background-color: #f9f9f9; }
+        .activity-item.open .activity-btn { background-color: #f0f7ff; color: var(--nicoya-light-blue); }
+        .drop-list { list-style: none; padding: 0; margin: 0; background-color: #FAFAFA; max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
+        .activity-item.open .drop-list { max-height: 5000px; border-bottom: 1px solid var(--nicoya-border); }
+        .drop-item { padding: 0.6rem 1.2rem 0.6rem 2.2rem; font-size: 0.8rem; color: #555; cursor: pointer; display: flex; align-items: center; gap: 0.6rem; transition: all 0.2s; }
+        .drop-item:hover { background-color: #eee; }
+        .drop-item.running { font-weight: 700; color: var(--nicoya-dark-blue); background-color: #e3f2fd; }
+        .drop-indicator { width: 8px; height: 8px; border-radius: 50%; background-color: #ddd; margin-right: 8px; }
+
+        .details-title { font-size: 1rem; font-weight: 800; color: var(--nicoya-dark-blue); margin-bottom: 0.5rem; }
+        .details-subtitle { font-size: 0.8rem; color: #777; margin-bottom: 1.5rem; }
+        
+        .data-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+        .data-table th { text-align: left; padding: 8px; border-bottom: 2px solid var(--nicoya-border); color: #999; font-weight: 700; text-transform: uppercase; font-size: 0.7rem; }
+        .data-table td { padding: 10px 8px; border-bottom: 1px solid #eee; color: #333; font-weight: 600; vertical-align: middle; }
+        .source-tag { display: inline-block; padding: 4px 8px; border-radius: 4px; color: white; font-weight: 700; font-size: 0.75rem; min-width: 24px; text-align: center; margin-right: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+
+        /* --- SCALABLE CANVAS --- */
+        main { 
+            grid-area: main; background-color: #F0F2F5; position: relative; 
+            overflow: hidden; display: flex; justify-content: center; align-items: center; 
+        }
+
+        #scaler { transform-origin: center center; width: 1280px; height: 800px; display: flex; justify-content: center; align-items: center; }
+        .chip-card { background: white; width: 100%; height: 100%; border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.1); padding: 20px 40px; position: relative; display: flex; flex-direction: column; }
+        
+        .chip-grid { 
+            display: grid; flex: 1; 
+            grid-template-rows: 30px 80px 60px 20px 60px repeat(8, 1fr) 70px; 
+            gap: 2px; 
+            position: relative; 
+        }
+
+        #pathOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 8; }
+
+        .app-switch { position: relative; display: inline-block; width: 90px; height: 30px; }
+        .app-switch input { opacity: 0; width: 0; height: 0; }
+        .app-slider { 
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; 
+            background-color: var(--nicoya-dark-blue); 
+            border-radius: 6px; transition: .4s; 
+            display: flex; align-items: center; justify-content: space-between; 
+            padding: 0 10px; font-size: 11px; font-weight: 800; 
+        }
+        .app-slider:before { 
+            position: absolute; content: ""; height: 24px; width: 42px; left: 3px; bottom: 3px; 
+            background-color: white; border-radius: 4px; transition: .4s; z-index: 1; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        input:checked + .app-slider:before { transform: translateX(42px); }
+        .app-label-l, .app-label-r { z-index: 2; transition: 0.3s; }
+        .app-label-l { color: var(--nicoya-light-blue); } 
+        .app-label-r { color: rgba(255,255,255,0.4); }   
+        input:checked + .app-slider .app-label-l { color: rgba(255,255,255,0.4); }
+        input:checked + .app-slider .app-label-r { color: var(--nicoya-light-blue); }
+
+        .row-label { font-size: 14px; font-weight: 700; color: #aaa; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px;}
+        .cell { position: relative; display: flex; justify-content: center; align-items: center; }
+
+        /* --- COMPONENT STYLES --- */
+        .mixer { 
+            width: 85%; height: 80%; 
+            background-color: var(--nicoya-yellow);
+            border-radius: 8px; z-index: 5; position: relative;
+            background-image: radial-gradient(rgba(255,255,255,0.6) 20%, transparent 20%); 
+            background-size: 10px 10px; 
+        }
+
+        .well { border-radius: 50%; border: 3px solid var(--nicoya-dark-blue); background: white; display: flex; justify-content: center; align-items: center; font-weight: 800; color: var(--nicoya-dark-blue); z-index: 12; transition: all 0.3s; position: relative; }
+        .well-s { width: 28px; height: 28px; font-size: 13px; }
+        .well-r { width: 44px; height: 44px; font-size: 14px; background-color: var(--nicoya-white); }
+        .well-bf { width: 48px; height: 48px; font-size: 15px; border-width: 4px; }
+        
+        .sensor-group { display: flex; gap: 6px; width: 80px; }
+        .sensor { 
+            flex: 1; height: 32px; 
+            background: #000000; color: #FFFFFF;
+            display: flex; justify-content: center; align-items: center; 
+            font-size: 12px; font-weight: 800; border-radius: 3px; 
+            z-index: 12; transition: background-color 0.3s; position: relative; 
+        }
+
+        .lane-box { 
+            background: var(--nicoya-light-blue); width: 90px; height: 24px; 
+            display: flex; justify-content: center; align-items: center; 
+            border-radius: 4px; font-size: 12px; font-weight: 700; 
+            z-index: 12; position: relative; color: #fff;
+        }
+
+        .gap-point { width: 0px; height: 0px; background: #bbb; border-radius: 50%; z-index: 12; box-shadow: inset 0 1px 3px rgba(0,0,0,0.2); position: relative; }
+
+        .liquid-drop { position: absolute; width: 14px; height: 14px; border-radius: 50%; z-index: 100; box-shadow: 0 3px 6px rgba(0,0,0,0.3); pointer-events: none; will-change: top, left; }
+        .fluid-path { fill: none; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.6; }
+        
+        #logPanel { position: absolute; bottom: 20px; right: 20px; background: rgba(33, 43, 56, 0.95); color: white; padding: 12px 20px; border-radius: 8px; font-size: 12px; z-index: 200; max-width: 300px; }
+        #chipTypeLabel { font-size: 0.7rem; color: #999; margin-left: 5px; background:#eee; padding:2px 4px; border-radius:4px; display:none;}
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand">
+            Epitope Binning
+            <span id="chipTypeLabel">CMD</span>
+        </div>
+        
+        <div class="config-panel">
+            <div class="config-group">
+                <span class="config-label">Chemistry</span>
+                <label class="app-switch">
+                    <input type="checkbox" id="appModeToggle">
+                    <span class="app-slider">
+                        <span class="app-label-l">CMD</span>
+                        <span class="app-label-r">STV</span>
+                    </span>
+                </label>
+            </div>
+            <div class="config-group">
+                <span class="config-label">Configuration</span>
+                <span style="font-weight: 700; font-size: 0.8rem; color: #555; background: #eee; padding: 6px 12px; border-radius: 4px;">16 Channels (8 Col)</span>
+            </div>
+        </div>
+    </header>
+
+    <aside class="sidebar-left">
+        <div class="sidebar-header" id="workflowHeader">Workflow</div>
+        <ul class="activity-list" id="activityList"></ul>
+    </aside>
+
+    <main id="mainContainer">
+        <div id="scaler">
+            <div class="chip-card" id="chipCard">
+                <svg id="pathOverlay"></svg>
+                <div id="chipGrid" class="chip-grid"></div>
+            </div>
+        </div>
+        <div id="logPanel">System Ready</div>
+    </main>
+
+    <aside class="sidebar-right">
+        <div class="details-header-group">
+            <div class="details-title" id="detailsTitle">Step Details</div>
+            <div class="details-subtitle" id="detailsSubtitle">Select a step to view mapping</div>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr> <th>Source Well</th> <th>Sensors</th> <th>Lane</th> </tr>
+                </thead>
+                <tbody id="detailsTableBody"><tr><td colspan="3" style="text-align:center;color:#ccc;">Waiting...</td></tr></tbody>
+            </table>
+        </div>
+    </aside>
+
+    <script>
+        // --- 1. CONFIG & COLORS ---
+        let appMode = 'CMD';
+
+        const colorsBinning = {
+            'BUFFER': '#29B6F6', 'R8': '#29B6F6',
+            'R1': '#FFAB91', 'R2': '#FF9100', 'R3': '#FF5252', 'R4': '#FFD180',
+            'R5': '#D500F9', 'R6': '#F50057', 
+            'A1': '#F50057', 'A2': '#00E676', 'A3': '#6200EA', 'A4': '#304FFE',
+            'A5': '#D50000', 'A6': '#AA00FF', 'A7': '#00B0FF', 'A8': '#0091EA',
+            'Antigen': '#AB47BC'
+        };
+
+        const getSourceColor = (wellId) => {
+            const id = wellId.replace('well-', '');
+            if(colorsBinning[id]) return colorsBinning[id];
+            if(id.startsWith('BF')) return colorsBinning['BUFFER'];
+            if(id.startsWith('R') && ['1','2','3','4'].includes(id[1])) return colorsBinning[`R${id[1]}`];
+            
+            const row = id.charAt(0);
+            const col = parseInt(id.substring(1));
+            if (['C','D','E','F','G','H'].includes(row)) {
+                let baseHue = 0;
+                if(row === 'C') baseHue = 30; if(row === 'D') baseHue = 180;
+                if(row === 'E') baseHue = 260; if(row === 'F') baseHue = 120;
+                if(row === 'G') baseHue = 320; if(row === 'H') baseHue = 60;
+                return `hsl(${baseHue + (col * 10)}, 80%, 45%)`;
+            }
+            return '#999';
+        }
+
+        const activeColumns = [1,2,3,4,5,6,7,8]; 
+        
+        // --- DOM ---
+        const gridEl = document.getElementById('chipGrid');
+        const svgEl = document.getElementById('pathOverlay');
+        const chipCardEl = document.getElementById('chipCard');
+        const scalerEl = document.getElementById('scaler');
+        const logPanel = document.getElementById('logPanel');
+        const activityListEl = document.getElementById('activityList');
+        const tableBodyEl = document.getElementById('detailsTableBody');
+        const detailsTitleEl = document.getElementById('detailsTitle');
+        const detailsSubtitleEl = document.getElementById('detailsSubtitle');
+
+        // --- WORKFLOW LOGIC ---
+        function getSolutionAbSource(sensorNum, roundNum) {
+            const set1 = []; for(let i=1; i<=8; i++) { set1.push(`well-E${i}`); set1.push(`well-G${i}`); }
+            const set2 = []; for(let i=1; i<=8; i++) { set2.push(`well-F${i}`); set2.push(`well-H${i}`); }
+            const targetArray = (roundNum <= 8) ? set1 : set2;
+            const offset = (roundNum <= 8) ? roundNum - 1 : roundNum - 9;
+            return targetArray[(sensorNum - 1 + offset) % 16];
+        }
+
+        function getWorkflowBinning() {
+            const wf = [];
+            wf.push({ id: 'Startup', steps: [{ label: 'Buffer' }] });
+            wf.push({ id: 'Normalization', steps: [{ label: 'Normalization High' }, { label: 'Buffer' }] });
+
+            if (appMode === 'CMD') {
+                wf.push({ id: 'Build Surface', steps: [ 
+                    { label: 'EDC/NHS' }, { label: 'Buffer' }, { label: 'Surface Antibody' }, 
+                    { label: 'Buffer' }, { label: 'Ethanolamine' }, { label: 'Buffer', forceBF: true } 
+                ]});
+            } else {
+                wf.push({ id: 'Build Surface', steps: [ { label: 'Bt-Ligand' }, { label: 'Buffer' } ]});
+            }
+
+            wf.push({ id: 'Conditioning', steps: [{ label: 'Regeneration' }, { label: 'Buffer' }] });
+            
+            const bufferCycle = [];
+            bufferCycle.push({ label: 'Buffer' }, { label: 'Buffer' }, { label: 'Buffer' }, { label: 'Regeneration' }, { label: 'Buffer' });
+            bufferCycle.push({ label: 'Antigen' }, { label: 'Buffer' }, { label: 'Buffer' }, { label: 'Regeneration' }, { label: 'Buffer' });
+            wf.push({ id: 'Classical Sandwich - Buffer Cycle', steps: bufferCycle });
+
+            for(let r=1; r<=16; r++) {
+                const round = [];
+                round.push({ label: 'Buffer' }, { label: 'Solution Antibody', roundNum: r }, { label: 'Buffer' }, { label: 'Regeneration' }, { label: 'Buffer' });
+                round.push({ label: 'Antigen' }, { label: 'Solution Antibody', roundNum: r }, { label: 'Buffer' }, { label: 'Regeneration' }, { label: 'Buffer' });
+                wf.push({ id: `Classical Sandwich - Round ${r}`, steps: round });
+            }
+            return wf;
+        }
+
+        function getSourcesBinning(step, colIndex) {
+            const label = step.label;
+            const sL = (colIndex * 2) - 1; 
+            const sR = (colIndex * 2);
+
+            if (step.forceBF || label === 'Buffer') return [{ id: `well-BF${colIndex}`, off: 0, side: 'Both', type: 'buffer' }];
+            if (label.includes('Normalize') || label === 'Normalization High') return [{ id: (colIndex % 2 !== 0) ? 'well-A1' : 'well-A2', off: 0, side: 'Both' }];
+            if (label.includes('Clean')) return [{ id: (colIndex % 2 !== 0) ? 'well-A3' : 'well-A4', off: 0, side: 'Both' }];
+            if (label.includes('Regeneration')) {
+                const mod = colIndex % 4;
+                if(mod === 1) return [{ id: 'well-R1', off: 0, side: 'Both' }];
+                if(mod === 2) return [{ id: 'well-R2', off: 0, side: 'Both' }];
+                if(mod === 3) return [{ id: 'well-R3', off: 0, side: 'Both' }];
+                return [{ id: 'well-R4', off: 0, side: 'Both' }];
+            }
+            if (label === 'EDC/NHS') return [{ id: 'well-A5', off: -5, side: 'Both' }, { id: 'well-A6', off: 5, side: 'Both' }];
+            if (label === 'Ethanolamine') return [{ id: (colIndex % 2 !== 0) ? 'well-A7' : 'well-A8', off: 0, side: 'Both' }];
+            
+            if (label === 'Surface Antibody' || label === 'Bt-Ligand') return [ { id: `well-C${colIndex}`, off: -5, side: 'L' }, { id: `well-D${colIndex}`, off: 5, side: 'R' } ];
+            if (label === 'Antigen') {
+                const antWell = (colIndex % 2 !== 0) ? 'well-R5' : 'well-R6';
+                return [{ id: antWell, off: 0, side: 'Both', type: 'analyte' }];
+            }
+            if (label === 'Solution Antibody') {
+                return [ 
+                    { id: getSolutionAbSource(sL, step.roundNum), off: -5, side: 'L', type: 'analyte' }, 
+                    { id: getSolutionAbSource(sR, step.roundNum), off: 5, side: 'R', type: 'analyte' } 
+                ];
+            }
+            return [];
+        }
+
+        // --- RENDER TABLE ---
+        function renderDetailsTable(actId, step) {
+            detailsTitleEl.textContent = step.label;
+            detailsSubtitleEl.textContent = actId;
+            tableBodyEl.innerHTML = '';
+
+            activeColumns.forEach((col, idx) => {
+                let sources = getSourcesBinning(step, col);
+                const logicalLane = col;
+                const sensLeft = (col * 2) - 1;
+                const sensRight = col * 2;
+
+                const createRow = (srcList) => {
+                    const tr = document.createElement('tr');
+                    const tdSrc = document.createElement('td');
+                    srcList.forEach(src => {
+                        const tag = document.createElement('span'); 
+                        tag.className = 'source-tag';
+                        tag.style.backgroundColor = getSourceColor(src.id);
+                        tag.textContent = src.id.replace('well-', '');
+                        tdSrc.appendChild(tag);
+                    });
+                    tr.appendChild(tdSrc);
+                    const tdSens = document.createElement('td'); 
+                    if(srcList.some(s => s.side === 'L')) tdSens.textContent = `${sensLeft}`;
+                    else if(srcList.some(s => s.side === 'R')) tdSens.textContent = `${sensRight}`;
+                    else tdSens.textContent = `${sensLeft}, ${sensRight}`;
+                    tr.appendChild(tdSens);
+                    const tdCh = document.createElement('td'); tdCh.textContent = logicalLane; tr.appendChild(tdCh);
+                    return tr;
+                };
+
+                const bothSources = sources.filter(s => s.side === 'Both' || !s.side);
+                if (bothSources.length > 0) tableBodyEl.appendChild(createRow(bothSources));
+                const leftSources = sources.filter(s => s.side === 'L');
+                if (leftSources.length > 0) tableBodyEl.appendChild(createRow(leftSources));
+                const rightSources = sources.filter(s => s.side === 'R');
+                if (rightSources.length > 0) tableBodyEl.appendChild(createRow(rightSources));
+            });
+        }
+
+        // --- ANIMATION ---
+        function getLocalCoords(el) {
+            let x = 0; let y = 0; let curr = el;
+            while(curr && curr.id !== 'chipCard') {
+                x += curr.offsetLeft; y += curr.offsetTop;
+                curr = curr.offsetParent;
+            }
+            x += el.offsetWidth / 2; y += el.offsetHeight / 2;
+            return { x, y };
+        }
+
+        function createDrop(el, color, offX = 0) {
+            const d = document.createElement('div');
+            d.className = 'liquid-drop'; d.style.backgroundColor = color;
+            const c = getLocalCoords(el);
+            d.style.left = (c.x + offX - 7) + 'px'; d.style.top = (c.y - 7) + 'px';
+            chipCardEl.appendChild(d);
+            return d;
+        }
+
+        const SPEED_PX_PER_SEC = 500; 
+
+        async function animateDirect(el, start, end, color, pref) {
+            return new Promise(resolve => {
+                el.style.left = (start.x - 7) + 'px'; el.style.top = (start.y - 7) + 'px';
+                if(Math.abs(start.x - end.x) < 1 && Math.abs(start.y - end.y) < 1) { resolve(); return; }
+
+                let elbow = (pref === 'x-first') ? { x: end.x, y: start.y } : { x: start.x, y: end.y };
+                const d1 = Math.hypot(elbow.x - start.x, elbow.y - start.y);
+                const d2 = Math.hypot(end.x - elbow.x, end.y - elbow.y);
+                const totalDist = d1 + d2;
+                if(totalDist < 1) { resolve(); return; }
+
+                const duration = (totalDist / SPEED_PX_PER_SEC) * 1000;
+                const keyframes = [];
+                keyframes.push({ left: (start.x - 7) + 'px', top: (start.y - 7) + 'px', offset: 0 });
+                if(d1 > 1 && d2 > 1) {
+                    keyframes.push({ left: (elbow.x - 7) + 'px', top: (elbow.y - 7) + 'px', offset: d1/totalDist });
+                }
+                keyframes.push({ left: (end.x - 7) + 'px', top: (end.y - 7) + 'px', offset: 1 });
+
+                const anim = el.animate(keyframes, { duration: duration, easing: 'linear', fill: 'forwards' });
+                anim.onfinish = () => {
+                    drawPathLine(start, elbow, end, color);
+                    el.style.left = (end.x - 7) + 'px'; el.style.top = (end.y - 7) + 'px';
+                    resolve();
+                };
+            });
+        }
+
+        function drawPathLine(p1, p2, p3, color) {
+            const pts = `${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y}`;
+            const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+            poly.setAttribute('points', pts); poly.setAttribute('class', 'fluid-path');
+            poly.style.stroke = color; poly.style.fill = 'none';
+            svgEl.appendChild(poly);
+        }
+
+        async function runStep(actId, step, uiEl) {
+            document.querySelectorAll('.drop-item').forEach(el => el.classList.remove('running'));
+            uiEl.classList.add('running');
+            clearVisuals();
+            renderDetailsTable(actId, step);
+            logPanel.innerHTML = `Action: ${step.label}<br>Status: Initializing...`;
+
+            let drops = [];
+            activeColumns.forEach((col, idx) => {
+                const sources = getSourcesBinning(step, col);
+                sources.forEach(src => {
+                    drops.push({ 
+                        targetCol: col, sourceId: src.id, 
+                        color: getSourceColor(src.id), offset: src.off, side: src.side 
+                    });
+                });
+            });
+
+            if(drops.length === 0) { logPanel.innerHTML = "No active sources."; return; }
+
+            // Highlight source wells
+            drops.forEach(d => {
+                const el = document.getElementById(d.sourceId);
+                if(el) { el.style.backgroundColor = d.color; el.style.borderColor = d.color; el.style.color = '#fff'; }
+            });
+
+            // 1. To Gap
+            const p1 = drops.map(d => {
+                const srcEl = document.getElementById(d.sourceId);
+                const srcColNum = parseInt(d.sourceId.match(/\d+$/)[0]); 
+                const gapEl = document.getElementById(`gap-${srcColNum}`);
+                if(!srcEl || !gapEl) return Promise.resolve();
+                d.element = createDrop(srcEl, d.color, d.offset);
+                const start = getLocalCoords(srcEl); start.x += d.offset;
+                const end = getLocalCoords(gapEl); end.x += d.offset;
+                return animateDirect(d.element, start, end, d.color, 'y-first');
+            });
+            await Promise.all(p1);
+
+            // 2. Align (Gap to Gap)
+            const p2 = drops.map(d => {
+                if(!d.element) return Promise.resolve();
+                const srcColNum = parseInt(d.sourceId.match(/\d+$/)[0]); 
+                if(srcColNum === d.targetCol) return Promise.resolve();
+                const gapStart = document.getElementById(`gap-${srcColNum}`);
+                const gapEnd = document.getElementById(`gap-${d.targetCol}`);
+                const start = getLocalCoords(gapStart); start.x += d.offset;
+                const end = getLocalCoords(gapEnd); end.x += d.offset;
+                return animateDirect(d.element, start, end, d.color, 'x-first');
+            });
+            await Promise.all(p2);
+
+            // 3. To Mixer Entry (Parallel or Convergent)
+            const p3 = drops.map(d => {
+                if(!d.element) return Promise.resolve();
+                const gapEl = document.getElementById(`gap-${d.targetCol}`);
+                const mixEl = document.getElementById(`mix-${d.targetCol}`);
+                const start = getLocalCoords(gapEl); start.x += d.offset;
+                
+                const mixC = getLocalCoords(mixEl);
+                let targetX = mixC.x;
+                
+                // If "Distinct", offset the path so they look parallel (never touching center)
+                // Using 15px to align roughly with sensors
+                if (d.side === 'L') targetX -= 15; 
+                if (d.side === 'R') targetX += 15;
+                
+                // If "Both" (Shared), it stays center (targetX = mixC.x)
+                
+                const end = { x: targetX, y: mixC.y + 20 };
+                
+                return animateDirect(d.element, start, end, d.color, 'y-first');
+            });
+            await Promise.all(p3);
+            
+            await new Promise(r => setTimeout(r, 100));
+
+            // 4. Mixing / Delivery 
+            // We need to handle "Distinct" paths (continue straight) 
+            // vs "Shared" paths (split to both sensors)
+
+            // For "Shared" drops, we do the split logic.
+            // For "Distinct" drops, we just move them to the sensor.
+            
+            // Remove drops that are about to be split/moved to allow cleaner logic
+            drops.forEach(d => { 
+                if(d.element) {
+                    // Save reference if we need to reuse the element (for distinct)
+                    // But easier to just recreate drops at current position to normalize logic
+                    d.currentPos = { 
+                        x: parseFloat(d.element.style.left) + 7, 
+                        y: parseFloat(d.element.style.top) + 7 
+                    };
+                    d.element.remove(); 
+                }
+            });
+
+            const mixPromises = activeColumns.map(async (col) => { 
+                const colDrops = drops.filter(d => d.targetCol === col);
+                if(colDrops.length === 0) return;
+
+                const mixer = document.getElementById(`mix-${col}`);
+                const center = getLocalCoords(mixer); // Only used for "Shared" split origin
+                
+                const sL = document.getElementById(`s-${col}-L`); 
+                const sR = document.getElementById(`s-${col}-R`); 
+                const endL = getLocalCoords(sL);
+                const endR = getLocalCoords(sR);
+
+                const leftDrop = colDrops.find(d => d.side === 'L');
+                const rightDrop = colDrops.find(d => d.side === 'R');
+                const bothDrop = colDrops.find(d => d.side === 'Both'); 
+
+                const pArr = [];
+
+                // --- DISTINCT PATHS (Parallel) ---
+                if (leftDrop) {
+                    // Create drop where we left off (Left Rail)
+                    const start = leftDrop.currentPos;
+                    const dL = createDrop(mixer, leftDrop.color, 0);
+                    // Override createDrop placing logic by setting manual pos
+                    dL.style.left = (start.x - 7) + 'px'; dL.style.top = (start.y - 7) + 'px';
+                    
+                    pArr.push(animateDirect(dL, start, endL, leftDrop.color, 'y-first').then(() => { 
+                        sL.style.backgroundColor = leftDrop.color; dL.remove(); 
+                    }));
+                } 
+
+                if (rightDrop) {
+                    // Create drop where we left off (Right Rail)
+                    const start = rightDrop.currentPos;
+                    const dR = createDrop(mixer, rightDrop.color, 0);
+                    dR.style.left = (start.x - 7) + 'px'; dR.style.top = (start.y - 7) + 'px';
+                    
+                    pArr.push(animateDirect(dR, start, endR, rightDrop.color, 'y-first').then(() => { 
+                        sR.style.backgroundColor = rightDrop.color; dR.remove(); 
+                    }));
+                } 
+
+                // --- SHARED PATHS (Converge & Split) ---
+                if (bothDrop) {
+                    // This drop ended at the CENTER in step p3.
+                    // So we spawn two drops at Center and move them out.
+                    const dL = createDrop(mixer, bothDrop.color, 0); // Spawns at mixer center
+                    const dR = createDrop(mixer, bothDrop.color, 0); // Spawns at mixer center
+                    
+                    // Note: createDrop uses mixer center by default if offX=0. 
+                    // Our p3 ended at mixC.y + 20. createDrop puts it at mixC.y center.
+                    // Let's adjust start point to be where p3 ended.
+                    const splitStart = { x: center.x, y: center.y + 20 };
+                    
+                    dL.style.left = (splitStart.x - 7) + 'px'; dL.style.top = (splitStart.y - 7) + 'px';
+                    dR.style.left = (splitStart.x - 7) + 'px'; dR.style.top = (splitStart.y - 7) + 'px';
+
+                    pArr.push(animateDirect(dL, splitStart, endL, bothDrop.color, 'x-first').then(() => { 
+                        sL.style.backgroundColor = bothDrop.color; dL.remove(); 
+                    }));
+                    
+                    pArr.push(animateDirect(dR, splitStart, endR, bothDrop.color, 'x-first').then(() => { 
+                        sR.style.backgroundColor = bothDrop.color; dR.remove(); 
+                    }));
+                }
+                
+                await Promise.all(pArr);
+            });
+            
+            await Promise.all(mixPromises);
+            logPanel.innerHTML = `Action: ${step.label}<br>Status: Complete`;
+        }
+
+        function clearVisuals() {
+            svgEl.innerHTML = '';
+            document.querySelectorAll('.sensor').forEach(el => { el.style.backgroundColor = ''; el.style.opacity = 1; });
+            document.querySelectorAll('.well').forEach(el => { el.style.backgroundColor = ''; el.style.borderColor = ''; el.style.color = ''; });
+        }
+
+        function resize() {
+            const container = document.getElementById('mainContainer');
+            if(!container) return;
+            const cw = container.clientWidth; const ch = container.clientHeight;
+            const scale = Math.min(cw / 1280, ch / 800) * 0.98;
+            scalerEl.style.transform = `scale(${scale})`;
+        }
+        
+        const resizeObserver = new ResizeObserver(() => requestAnimationFrame(resize));
+        const mainContainer = document.getElementById('mainContainer');
+        if(mainContainer) resizeObserver.observe(mainContainer);
+
+        function renderGrid() {
+            clearVisuals(); gridEl.innerHTML = '';
+            const cols = 8; 
+            gridEl.style.gridTemplateColumns = `8% repeat(${cols}, 1fr)`;
+            
+            const addRow = (label, type, param) => {
+                const lbl = document.createElement('div'); lbl.className = 'row-label'; lbl.textContent = label; gridEl.appendChild(lbl);
+                for(let c=1; c<=cols; c++) {
+                    const cell = document.createElement('div'); cell.className = 'cell';
+                    if(type === 'sensor') cell.innerHTML = `<div class="sensor-group"><div class="sensor" id="s-${c}-L">${(c*2)-1}</div><div class="sensor" id="s-${c}-R">${c*2}</div></div>`;
+                    else if(type === 'mixer') cell.innerHTML = `<div class="mixer" id="mix-${c}"></div>`;
+                    else if(type === 'lane') cell.innerHTML = `<div class="lane-box">${c}</div>`;
+                    else if(type === 'gap') cell.innerHTML = `<div class="gap-point" id="gap-${c}"></div>`;
+                    else if(type === 'well-r') cell.innerHTML = `<div class="well well-r" id="well-R${c}">R${c}</div>`;
+                    else if(type === 'well-bf') cell.innerHTML = `<div class="well well-bf" id="well-BF${c}">BF${c}</div>`;
+                    else if(type === 'well-s') cell.innerHTML = `<div class="well well-s" id="well-${param}${c}">${param}${c}</div>`;
+                    gridEl.appendChild(cell);
+                }
+            };
+            addRow('Sensors', 'sensor'); 
+            addRow('Mixer', 'mixer'); 
+            addRow('Lanes', 'lane'); 
+            addRow('', 'gap'); 
+            addRow('Reagents', 'well-r');
+            ['A','B','C','D','E','F','G','H'].forEach(r => addRow(r, 'well-s', r)); 
+            addRow('Buffer', 'well-bf');
+        }
+
+        function renderSidebar() {
+            activityListEl.innerHTML = '';
+            const wf = getWorkflowBinning();
+            wf.forEach(act => {
+                const li = document.createElement('li'); li.className = 'activity-item';
+                const btn = document.createElement('button'); btn.className = 'activity-btn'; btn.innerHTML = `<span>${act.id}</span> <span>&#9662;</span>`;
+                btn.onclick = () => { document.querySelectorAll('.activity-item').forEach(i => i !== li && i.classList.remove('open')); li.classList.toggle('open'); };
+                const ul = document.createElement('ul'); ul.className = 'drop-list';
+                act.steps.forEach(step => {
+                    const dLi = document.createElement('li'); dLi.className = 'drop-item';
+                    dLi.innerHTML = `<div class="drop-indicator"></div> ${step.label}`;
+                    dLi.onclick = (e) => { e.stopPropagation(); runStep(act.id, step, dLi); };
+                    ul.appendChild(dLi);
+                });
+                li.appendChild(btn); li.appendChild(ul); activityListEl.appendChild(li);
+            });
+        }
+        
+        const appModeToggle = document.getElementById('appModeToggle');
+        function init() {
+            appModeToggle.addEventListener('change', (e) => {
+                appMode = e.target.checked ? 'STV' : 'CMD';
+                document.getElementById('chipTypeLabel').textContent = appMode;
+                clearVisuals(); renderSidebar();
+            });
+            renderGrid(); renderSidebar(); resize(); 
+        }
+        init();
+    </script>
+</body>
+</html>
