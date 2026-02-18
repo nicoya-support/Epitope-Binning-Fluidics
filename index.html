@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Epitope Binning - Aux Buffer</title>
+    <title>Epitope Binning - Zoom & Pan</title>
     <style>
         /* --- BRAND PALETTE --- */
         :root {
@@ -102,11 +102,27 @@
         /* --- SCALABLE CANVAS --- */
         main { 
             grid-area: main; background-color: #F0F2F5; position: relative; 
-            overflow: hidden; display: flex; justify-content: center; align-items: center; 
+            overflow: hidden; /* We handle drag ourselves, so hide scrollbars */
+            display: flex; justify-content: center; align-items: center; 
+            cursor: grab; /* Default state for pan */
         }
+        
+        main:active { cursor: grabbing; }
 
-        #scaler { transform-origin: center center; width: 1280px; height: 800px; display: flex; justify-content: center; align-items: center; }
-        .chip-card { background: white; width: 100%; height: 100%; border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.1); padding: 20px 40px; position: relative; display: flex; flex-direction: column; }
+        #scaler { 
+            transform-origin: center center; 
+            width: 1280px; height: 800px; 
+            display: flex; justify-content: center; align-items: center; 
+            /* Transition only on scale, not on translate (drag needs to be instant) */
+            transition: transform 0.1s ease-out;
+            will-change: transform;
+        }
+        
+        .chip-card { 
+            background: white; width: 100%; height: 100%; 
+            border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.1); 
+            padding: 20px 40px; position: relative; display: flex; flex-direction: column; 
+        }
         
         .chip-grid { 
             display: grid; flex: 1; 
@@ -140,6 +156,9 @@
         .row-label { font-size: 14px; font-weight: 700; color: #aaa; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px;}
         .cell { position: relative; display: flex; justify-content: center; align-items: center; }
 
+        /* Zoom Slider Styling */
+        #zoomRange { accent-color: var(--nicoya-dark-blue); width: 100px; cursor: pointer; }
+        
         /* --- COMPONENT STYLES --- */
         .mixer { 
             width: 85%; height: 80%; 
@@ -198,6 +217,12 @@
                     </span>
                 </label>
             </div>
+            
+            <div class="config-group">
+                <span class="config-label">Zoom</span>
+                <input type="range" id="zoomRange" min="0.5" max="2.0" step="0.1" value="1.0" oninput="updateZoom(this.value)">
+                <span id="zoomVal" style="font-weight:700; font-size:0.8rem; color:#555; width:30px;">1.0x</span>
+            </div>
         </div>
     </header>
 
@@ -234,6 +259,12 @@
     <script>
         // --- 1. CONFIG & COLORS ---
         let appMode = 'CMD';
+        let zoomFactor = 1.0;
+        let panX = 0;
+        let panY = 0;
+        let isDragging = false;
+        let startX = 0; 
+        let startY = 0;
 
         const colorsBinning = {
             'BUFFER': '#29B6F6', 'R8': '#29B6F6',
@@ -274,6 +305,7 @@
         const tableBodyEl = document.getElementById('detailsTableBody');
         const detailsTitleEl = document.getElementById('detailsTitle');
         const detailsSubtitleEl = document.getElementById('detailsSubtitle');
+        const mainContainer = document.getElementById('mainContainer');
 
         // --- WORKFLOW LOGIC ---
         function getSolutionAbSource(sensorNum, roundNum) {
@@ -286,18 +318,15 @@
 
         function getWorkflowBinning() {
             const wf = [];
-            // Startup with Aux Buffer logic for CMD
             wf.push({ id: 'Startup', steps: [{ label: 'Buffer', isAux: true }] });
-            
-            // Normalization with Aux Buffer logic for CMD
             wf.push({ id: 'Normalization', steps: [{ label: 'Normalization High' }, { label: 'Buffer', isAux: true }] });
 
             if (appMode === 'CMD') {
                 wf.push({ id: 'Build Surface', steps: [ 
                     { label: 'EDC/NHS' }, 
-                    { label: 'Buffer', isAux: true }, // Aux Buffer Logic
+                    { label: 'Buffer', isAux: true }, 
                     { label: 'Surface Antibody' }, 
-                    { label: 'Buffer', isAux: true }, // Aux Buffer Logic
+                    { label: 'Buffer', isAux: true }, 
                     { label: 'Ethanolamine' }, 
                     { label: 'Buffer', forceBF: true } 
                 ]});
@@ -326,7 +355,6 @@
             const sL = (colIndex * 2) - 1; 
             const sR = (colIndex * 2);
 
-            // AUX BUFFER LOGIC: If CMD and step is marked isAux, use R8
             if (appMode === 'CMD' && step.isAux) {
                 return [{ id: 'well-R8', off: 0, side: 'Both', type: 'buffer' }];
             }
@@ -335,10 +363,8 @@
             
             if (label.includes('Normalize') || label === 'Normalization High') {
                 if (appMode === 'STV') {
-                    // STV Mode: All sensors use R8 for Norm High
                     return [{ id: 'well-R8', off: 0, side: 'Both', type: 'norm' }];
                 }
-                // CMD Mode: Original Logic (A1/A2 split)
                 return [{ id: (colIndex % 2 !== 0) ? 'well-A1' : 'well-A2', off: 0, side: 'Both' }];
             }
 
@@ -489,7 +515,6 @@
 
             if(drops.length === 0) { logPanel.innerHTML = "No active sources."; return; }
 
-            // Highlight source wells
             drops.forEach(d => {
                 const el = document.getElementById(d.sourceId);
                 if(el) { el.style.backgroundColor = d.color; el.style.borderColor = d.color; el.style.color = '#fff'; }
@@ -508,7 +533,7 @@
             });
             await Promise.all(p1);
 
-            // 2. Align (Gap to Gap)
+            // 2. Align
             const p2 = drops.map(d => {
                 if(!d.element) return Promise.resolve();
                 const srcColNum = parseInt(d.sourceId.match(/\d+$/)[0]); 
@@ -521,7 +546,7 @@
             });
             await Promise.all(p2);
 
-            // 3. To Mixer Entry (Parallel or Convergent)
+            // 3. To Mixer
             const p3 = drops.map(d => {
                 if(!d.element) return Promise.resolve();
                 const gapEl = document.getElementById(`gap-${d.targetCol}`);
@@ -531,24 +556,19 @@
                 const mixC = getLocalCoords(mixEl);
                 let targetX = mixC.x;
                 
-                // If "Distinct", offset the path so they look parallel (never touching center)
                 if (d.side === 'L') targetX -= 15; 
                 if (d.side === 'R') targetX += 15;
                 
-                // If "Both" (Shared), it stays center (targetX = mixC.x)
-                
                 const end = { x: targetX, y: mixC.y + 20 };
-                
                 return animateDirect(d.element, start, end, d.color, 'y-first');
             });
             await Promise.all(p3);
             
             await new Promise(r => setTimeout(r, 100));
 
-            // 4. Mixing / Delivery 
+            // 4. Delivery 
             drops.forEach(d => { 
                 if(d.element) {
-                    // Save reference if we need to reuse the element (for distinct)
                     d.currentPos = { 
                         x: parseFloat(d.element.style.left) + 7, 
                         y: parseFloat(d.element.style.top) + 7 
@@ -562,7 +582,7 @@
                 if(colDrops.length === 0) return;
 
                 const mixer = document.getElementById(`mix-${col}`);
-                const center = getLocalCoords(mixer); // Only used for "Shared" split origin
+                const center = getLocalCoords(mixer); 
                 
                 const sL = document.getElementById(`s-${col}-L`); 
                 const sR = document.getElementById(`s-${col}-R`); 
@@ -575,7 +595,6 @@
 
                 const pArr = [];
 
-                // --- DISTINCT PATHS (Parallel) ---
                 if (leftDrop) {
                     const start = leftDrop.currentPos;
                     const dL = createDrop(mixer, leftDrop.color, 0);
@@ -594,7 +613,6 @@
                     }));
                 } 
 
-                // --- SHARED PATHS (Converge & Split) ---
                 if (bothDrop) {
                     const dL = createDrop(mixer, bothDrop.color, 0);
                     const dR = createDrop(mixer, bothDrop.color, 0);
@@ -626,16 +644,44 @@
             document.querySelectorAll('.well').forEach(el => { el.style.backgroundColor = ''; el.style.borderColor = ''; el.style.color = ''; });
         }
 
-        function resize() {
-            const container = document.getElementById('mainContainer');
-            if(!container) return;
-            const cw = container.clientWidth; const ch = container.clientHeight;
-            const scale = Math.min(cw / 1280, ch / 800) * 0.98;
-            scalerEl.style.transform = `scale(${scale})`;
+        // --- ZOOM & PAN LOGIC ---
+        function updateZoom(val) {
+            zoomFactor = parseFloat(val);
+            document.getElementById('zoomVal').textContent = zoomFactor.toFixed(1) + 'x';
+            if(zoomFactor <= 1.0) { panX = 0; panY = 0; } // Reset pan if zoomed out
+            resize();
         }
+
+        function resize() {
+            const cw = mainContainer.clientWidth; const ch = mainContainer.clientHeight;
+            // Base Scale logic for "fit to screen"
+            const baseScale = Math.min(cw / 1280, ch / 800) * 0.95;
+            const finalScale = baseScale * zoomFactor;
+            
+            scalerEl.style.transform = `translate(${panX}px, ${panY}px) scale(${finalScale})`;
+        }
+
+        // DRAG HANDLERS
+        mainContainer.addEventListener('mousedown', (e) => {
+            if(zoomFactor <= 1.0) return; // Only drag if zoomed in
+            isDragging = true;
+            startX = e.clientX - panX;
+            startY = e.clientY - panY;
+            mainContainer.style.cursor = 'grabbing';
+        });
+
+        mainContainer.addEventListener('mousemove', (e) => {
+            if(!isDragging) return;
+            e.preventDefault();
+            panX = e.clientX - startX;
+            panY = e.clientY - startY;
+            resize(); // Re-apply transform with new pan coords
+        });
+
+        mainContainer.addEventListener('mouseup', () => { isDragging = false; mainContainer.style.cursor = 'grab'; });
+        mainContainer.addEventListener('mouseleave', () => { isDragging = false; mainContainer.style.cursor = 'grab'; });
         
         const resizeObserver = new ResizeObserver(() => requestAnimationFrame(resize));
-        const mainContainer = document.getElementById('mainContainer');
         if(mainContainer) resizeObserver.observe(mainContainer);
 
         function renderGrid() {
