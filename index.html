@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Epitope Binning - Updated</title>
+    <title>Epitope Binning - Aux Buffer</title>
     <style>
         /* --- BRAND PALETTE --- */
         :root {
@@ -286,16 +286,22 @@
 
         function getWorkflowBinning() {
             const wf = [];
-            wf.push({ id: 'Startup', steps: [{ label: 'Buffer' }] });
-            wf.push({ id: 'Normalization', steps: [{ label: 'Normalization High' }, { label: 'Buffer' }] });
+            // Startup with Aux Buffer logic for CMD
+            wf.push({ id: 'Startup', steps: [{ label: 'Buffer', isAux: true }] });
+            
+            // Normalization with Aux Buffer logic for CMD
+            wf.push({ id: 'Normalization', steps: [{ label: 'Normalization High' }, { label: 'Buffer', isAux: true }] });
 
             if (appMode === 'CMD') {
                 wf.push({ id: 'Build Surface', steps: [ 
-                    { label: 'EDC/NHS' }, { label: 'Buffer' }, { label: 'Surface Antibody' }, 
-                    { label: 'Buffer' }, { label: 'Ethanolamine' }, { label: 'Buffer', forceBF: true } 
+                    { label: 'EDC/NHS' }, 
+                    { label: 'Buffer', isAux: true }, // Aux Buffer Logic
+                    { label: 'Surface Antibody' }, 
+                    { label: 'Buffer', isAux: true }, // Aux Buffer Logic
+                    { label: 'Ethanolamine' }, 
+                    { label: 'Buffer', forceBF: true } 
                 ]});
             } else {
-                // Renamed 'Bt-Ligand' to 'Surface Solution'
                 wf.push({ id: 'Build Surface', steps: [ { label: 'Surface Solution' }, { label: 'Buffer' } ]});
             }
 
@@ -320,12 +326,16 @@
             const sL = (colIndex * 2) - 1; 
             const sR = (colIndex * 2);
 
+            // AUX BUFFER LOGIC: If CMD and step is marked isAux, use R8
+            if (appMode === 'CMD' && step.isAux) {
+                return [{ id: 'well-R8', off: 0, side: 'Both', type: 'buffer' }];
+            }
+
             if (step.forceBF || label === 'Buffer') return [{ id: `well-BF${colIndex}`, off: 0, side: 'Both', type: 'buffer' }];
             
-            // NORMALIZATION LOGIC CHANGE
             if (label.includes('Normalize') || label === 'Normalization High') {
                 if (appMode === 'STV') {
-                    // STV Mode: All sensors use R8
+                    // STV Mode: All sensors use R8 for Norm High
                     return [{ id: 'well-R8', off: 0, side: 'Both', type: 'norm' }];
                 }
                 // CMD Mode: Original Logic (A1/A2 split)
@@ -343,7 +353,6 @@
             if (label === 'EDC/NHS') return [{ id: 'well-A5', off: -5, side: 'Both' }, { id: 'well-A6', off: 5, side: 'Both' }];
             if (label === 'Ethanolamine') return [{ id: (colIndex % 2 !== 0) ? 'well-A7' : 'well-A8', off: 0, side: 'Both' }];
             
-            // Renamed check here to include 'Surface Solution'
             if (label === 'Surface Antibody' || label === 'Surface Solution') {
                 return [ { id: `well-C${colIndex}`, off: -5, side: 'L' }, { id: `well-D${colIndex}`, off: 5, side: 'R' } ];
             }
