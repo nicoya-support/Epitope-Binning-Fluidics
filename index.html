@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Epitope Binning - Parallel Flow</title>
+    <title>Epitope Binning - Updated</title>
     <style>
         /* --- BRAND PALETTE --- */
         :root {
@@ -295,7 +295,8 @@
                     { label: 'Buffer' }, { label: 'Ethanolamine' }, { label: 'Buffer', forceBF: true } 
                 ]});
             } else {
-                wf.push({ id: 'Build Surface', steps: [ { label: 'Bt-Ligand' }, { label: 'Buffer' } ]});
+                // Renamed 'Bt-Ligand' to 'Surface Solution'
+                wf.push({ id: 'Build Surface', steps: [ { label: 'Surface Solution' }, { label: 'Buffer' } ]});
             }
 
             wf.push({ id: 'Conditioning', steps: [{ label: 'Regeneration' }, { label: 'Buffer' }] });
@@ -320,7 +321,17 @@
             const sR = (colIndex * 2);
 
             if (step.forceBF || label === 'Buffer') return [{ id: `well-BF${colIndex}`, off: 0, side: 'Both', type: 'buffer' }];
-            if (label.includes('Normalize') || label === 'Normalization High') return [{ id: (colIndex % 2 !== 0) ? 'well-A1' : 'well-A2', off: 0, side: 'Both' }];
+            
+            // NORMALIZATION LOGIC CHANGE
+            if (label.includes('Normalize') || label === 'Normalization High') {
+                if (appMode === 'STV') {
+                    // STV Mode: All sensors use R8
+                    return [{ id: 'well-R8', off: 0, side: 'Both', type: 'norm' }];
+                }
+                // CMD Mode: Original Logic (A1/A2 split)
+                return [{ id: (colIndex % 2 !== 0) ? 'well-A1' : 'well-A2', off: 0, side: 'Both' }];
+            }
+
             if (label.includes('Clean')) return [{ id: (colIndex % 2 !== 0) ? 'well-A3' : 'well-A4', off: 0, side: 'Both' }];
             if (label.includes('Regeneration')) {
                 const mod = colIndex % 4;
@@ -332,7 +343,11 @@
             if (label === 'EDC/NHS') return [{ id: 'well-A5', off: -5, side: 'Both' }, { id: 'well-A6', off: 5, side: 'Both' }];
             if (label === 'Ethanolamine') return [{ id: (colIndex % 2 !== 0) ? 'well-A7' : 'well-A8', off: 0, side: 'Both' }];
             
-            if (label === 'Surface Antibody' || label === 'Bt-Ligand') return [ { id: `well-C${colIndex}`, off: -5, side: 'L' }, { id: `well-D${colIndex}`, off: 5, side: 'R' } ];
+            // Renamed check here to include 'Surface Solution'
+            if (label === 'Surface Antibody' || label === 'Surface Solution') {
+                return [ { id: `well-C${colIndex}`, off: -5, side: 'L' }, { id: `well-D${colIndex}`, off: 5, side: 'R' } ];
+            }
+
             if (label === 'Antigen') {
                 const antWell = (colIndex % 2 !== 0) ? 'well-R5' : 'well-R6';
                 return [{ id: antWell, off: 0, side: 'Both', type: 'analyte' }];
@@ -508,7 +523,6 @@
                 let targetX = mixC.x;
                 
                 // If "Distinct", offset the path so they look parallel (never touching center)
-                // Using 15px to align roughly with sensors
                 if (d.side === 'L') targetX -= 15; 
                 if (d.side === 'R') targetX += 15;
                 
@@ -523,17 +537,9 @@
             await new Promise(r => setTimeout(r, 100));
 
             // 4. Mixing / Delivery 
-            // We need to handle "Distinct" paths (continue straight) 
-            // vs "Shared" paths (split to both sensors)
-
-            // For "Shared" drops, we do the split logic.
-            // For "Distinct" drops, we just move them to the sensor.
-            
-            // Remove drops that are about to be split/moved to allow cleaner logic
             drops.forEach(d => { 
                 if(d.element) {
                     // Save reference if we need to reuse the element (for distinct)
-                    // But easier to just recreate drops at current position to normalize logic
                     d.currentPos = { 
                         x: parseFloat(d.element.style.left) + 7, 
                         y: parseFloat(d.element.style.top) + 7 
@@ -562,23 +568,18 @@
 
                 // --- DISTINCT PATHS (Parallel) ---
                 if (leftDrop) {
-                    // Create drop where we left off (Left Rail)
                     const start = leftDrop.currentPos;
                     const dL = createDrop(mixer, leftDrop.color, 0);
-                    // Override createDrop placing logic by setting manual pos
                     dL.style.left = (start.x - 7) + 'px'; dL.style.top = (start.y - 7) + 'px';
-                    
                     pArr.push(animateDirect(dL, start, endL, leftDrop.color, 'y-first').then(() => { 
                         sL.style.backgroundColor = leftDrop.color; dL.remove(); 
                     }));
                 } 
 
                 if (rightDrop) {
-                    // Create drop where we left off (Right Rail)
                     const start = rightDrop.currentPos;
                     const dR = createDrop(mixer, rightDrop.color, 0);
                     dR.style.left = (start.x - 7) + 'px'; dR.style.top = (start.y - 7) + 'px';
-                    
                     pArr.push(animateDirect(dR, start, endR, rightDrop.color, 'y-first').then(() => { 
                         sR.style.backgroundColor = rightDrop.color; dR.remove(); 
                     }));
@@ -586,14 +587,9 @@
 
                 // --- SHARED PATHS (Converge & Split) ---
                 if (bothDrop) {
-                    // This drop ended at the CENTER in step p3.
-                    // So we spawn two drops at Center and move them out.
-                    const dL = createDrop(mixer, bothDrop.color, 0); // Spawns at mixer center
-                    const dR = createDrop(mixer, bothDrop.color, 0); // Spawns at mixer center
+                    const dL = createDrop(mixer, bothDrop.color, 0);
+                    const dR = createDrop(mixer, bothDrop.color, 0);
                     
-                    // Note: createDrop uses mixer center by default if offX=0. 
-                    // Our p3 ended at mixC.y + 20. createDrop puts it at mixC.y center.
-                    // Let's adjust start point to be where p3 ended.
                     const splitStart = { x: center.x, y: center.y + 20 };
                     
                     dL.style.left = (splitStart.x - 7) + 'px'; dL.style.top = (splitStart.y - 7) + 'px';
